@@ -1,0 +1,19 @@
+# Core dependencies
+torch>=2.0.0
+transformers>=4.35.0
+accelerate>=0.24.0
+sentence-transformers>=2.2.0
+
+# Vector search
+faiss-cpu>=1.7.4
+
+# API/Server
+requests>=2.31.0
+
+# Data
+datasets>=2.15.0
+pandas>=2.1.0
+
+# Utilities
+numpy>=1.24.0
+tqdm>=4.66.0
