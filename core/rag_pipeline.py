@@ -255,7 +255,7 @@ def main():
     rag = BiomedRAG(
         model_name="phi3",
         index_path="data/faiss_index.bin",
-        pmid_map_path="data/pmid_map.pkl",
+        pmid_map_path="data/pubmed.db",
         n_docs=5,
         use_rag=True
     )
