@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  biomed-rag:
+    build: .
+    container_name: biomed_rag_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - model_cache:/root/.cache
+    environment:
+      - PYTHONPATH=/app
+
+volumes:
+  model_cache:
+

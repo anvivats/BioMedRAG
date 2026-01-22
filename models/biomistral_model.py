@@ -22,7 +22,7 @@ class BioMistralModel(BaseLLM):
     def __init__(
         self,
         model_name: str = "BioMistral/BioMistral-7B",
-        max_length: int = 2048  # 🔑 Reduced for stability
+        max_length: int = 2048
     ):
         super().__init__(model_name, max_length)
         self.load_model()
@@ -38,14 +38,14 @@ class BioMistralModel(BaseLLM):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # 🔑 CRITICAL: Add offload_folder and offload_buffers
+        # Load model with disk offloading support
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
             trust_remote_code=True,
             torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
             device_map="auto",
-            offload_folder="./offload",   # 🔑 Required for disk offloading
-            offload_buffers=True          # 🔑 Prevents OOM
+            offload_folder="./offload",
+            offload_buffers=True
         )
 
         self.model.eval()
@@ -57,6 +57,13 @@ class BioMistralModel(BaseLLM):
     def _format_prompt(self, question: str, context: List[Dict]) -> str:
         """
         Format prompt using Mistral's instruction template.
+        
+        Args:
+            question: User's question
+            context: List of context documents
+            
+        Returns:
+            Formatted prompt string
         """
         if context:
             context_text = self._format_context(context)
