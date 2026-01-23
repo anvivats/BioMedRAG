@@ -135,6 +135,47 @@ class PubMedQALoader:
 
 
 # ------------------------------------------------------------------
+# Load dataset for evaluation (used in experiments)
+# ------------------------------------------------------------------
+def load_pubmedqa(split: str = "train", test_size: int = 200) -> List[Dict]:
+    """
+    Load PubMedQA dataset for evaluation/experiments.
+    
+    Args:
+        split: "train", "test", or "all"
+               Note: PubMedQA only has a 'train' split, so we create train/test
+        test_size: Number of examples to reserve for test set
+    
+    Returns:
+        List of dicts with keys: question, answer, pmid
+    """
+    print(f"📥 Loading PubMedQA dataset for evaluation...")
+    
+    # Load the full train split (only split available in pqa_labeled)
+    raw_dataset = load_dataset("qiaojin/PubMedQA", "pqa_labeled", split="train")
+    
+    dataset = []
+    for example in raw_dataset:
+        dataset.append({
+            "question": example.get("question", ""),
+            "answer": example.get("final_decision", ""),  # "yes", "no", or "maybe"
+            "pmid": example.get("pubid", None)
+        })
+    
+    # Split into train/test based on request
+    if split == "test":
+        dataset = dataset[-test_size:]  # Last N examples as test
+        print(f"✓ Loaded {len(dataset)} examples (test set)")
+    elif split == "train":
+        dataset = dataset[:-test_size]  # Rest as train
+        print(f"✓ Loaded {len(dataset)} examples (train set)")
+    else:  # "all" or any other value
+        print(f"✓ Loaded {len(dataset)} examples (full dataset)")
+    
+    return dataset
+
+
+# ------------------------------------------------------------------
 # Main entrypoint
 # ------------------------------------------------------------------
 def main():

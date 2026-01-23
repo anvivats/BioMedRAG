@@ -13,10 +13,10 @@ from typing import List, Dict
 
 import numpy as np
 import torch
-from datasets import load_dataset
 
 from models import get_model, MODEL_INFO
 from docker.faiss_server import search as retrieve_documents
+from data.load_pubmedqa import load_pubmedqa
 
 
 # =========================
@@ -35,27 +35,6 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 CSV_PATH = OUTPUT_DIR / "model_comparison.csv"
 JSON_PATH = OUTPUT_DIR / "detailed_outputs.json"
-
-
-# =========================
-# Load PubMedQA for evaluation
-# =========================
-def load_pubmedqa(split: str = "test"):
-    """Load PubMedQA dataset from HuggingFace for evaluation."""
-    print(f"📥 Loading PubMedQA dataset (split: {split})...")
-    
-    raw_dataset = load_dataset("qiaojin/PubMedQA", "pqa_labeled", split=split)
-    
-    dataset = []
-    for example in raw_dataset:
-        dataset.append({
-            "question": example.get("question", ""),
-            "answer": example.get("final_decision", ""),  # "yes", "no", or "maybe"
-            "pmid": example.get("pubid", None)
-        })
-    
-    print(f"✓ Loaded {len(dataset)} examples")
-    return dataset
 
 
 # =========================
@@ -93,7 +72,7 @@ def token_f1(pred: str, gold: str) -> float:
 
 
 def rouge_l(pred: str, gold: str) -> float:
-    # simple LCS-based ROUGE-L
+    """Simple LCS-based ROUGE-L implementation."""
     def lcs(a, b):
         dp = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
         for i in range(len(a)):
@@ -126,13 +105,17 @@ def rouge_l(pred: str, gold: str) -> float:
 def run():
     set_seed(SEED)
 
-    dataset = load_pubmedqa(split="test")
+    # Load evaluation dataset
+    dataset = load_pubmedqa(split="all")  # Use all 1000 examples
 
     results = []
     detailed_logs = []
 
     for model_key in MODELS:
-        print(f"\n🚀 Evaluating {model_key.upper()}")
+        print(f"\n{'='*60}")
+        print(f"🚀 Evaluating: {model_key.upper()}")
+        print(f"{'='*60}")
+        
         model = get_model(model_key)
 
         em_scores = []
@@ -150,23 +133,32 @@ def run():
             gold_pmid = sample.get("pmid")
 
             # ---------- Retrieval ----------
-            retrieved_docs = retrieve_documents(question, top_k=TOP_K)
+            try:
+                retrieved_docs = retrieve_documents(question, top_k=TOP_K)
+            except Exception as e:
+                print(f"  ⚠️  Retrieval failed for question {idx}: {e}")
+                retrieved_docs = []
 
-            if gold_pmid is not None:
-                hit = int(any(doc["pmid"] == gold_pmid for doc in retrieved_docs))
+            # Check if gold PMID is in retrieved docs
+            if gold_pmid is not None and retrieved_docs:
+                hit = int(any(doc.get("pmid") == gold_pmid for doc in retrieved_docs))
                 retrieval_hits.append(hit)
 
             # ---------- Generation ----------
             start = time.time()
-            prediction = model.generate(
-                question=question,
-                context=retrieved_docs,
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-                max_new_tokens=MAX_NEW_TOKENS
-            )
+            try:
+                prediction = model.generate(
+                    question=question,
+                    context=retrieved_docs,
+                    temperature=TEMPERATURE,
+                    top_p=TOP_P,
+                    max_new_tokens=MAX_NEW_TOKENS
+                )
+            except Exception as e:
+                print(f"  ⚠️  Generation failed for question {idx}: {e}")
+                prediction = ""
+            
             latency = time.time() - start
-
             latencies.append(latency)
 
             # ---------- Metrics ----------
@@ -174,46 +166,68 @@ def run():
             f1_scores.append(token_f1(prediction, gold_answer))
             rouge_scores.append(rouge_l(prediction, gold_answer))
 
+            # ---------- Logging ----------
             detailed_logs.append({
                 "model": model_key,
                 "question": question,
                 "gold_answer": gold_answer,
                 "prediction": prediction,
                 "latency": latency,
-                "retrieved_pmids": [d["pmid"] for d in retrieved_docs]
+                "retrieved_pmids": [d.get("pmid") for d in retrieved_docs] if retrieved_docs else []
             })
 
+        # Compute aggregate metrics
         result = {
             "model": MODEL_INFO[model_key]["name"],
             "parameters": MODEL_INFO[model_key]["parameters"],
-            "EM": np.mean(em_scores),
-            "F1": np.mean(f1_scores),
-            "ROUGE-L": np.mean(rouge_scores),
+            "EM": np.mean(em_scores) if em_scores else 0.0,
+            "F1": np.mean(f1_scores) if f1_scores else 0.0,
+            "ROUGE-L": np.mean(rouge_scores) if rouge_scores else 0.0,
             "Recall@5": np.mean(retrieval_hits) if retrieval_hits else None,
-            "Latency (s)": np.mean(latencies)
+            "Latency (s)": np.mean(latencies) if latencies else 0.0
         }
 
         results.append(result)
-        print(f"✓ {model_key}: EM={result['EM']:.3f}, F1={result['F1']:.3f}, Latency={result['Latency (s)']:.2f}s")
+        
+        print(f"\n✓ Results for {model_key}:")
+        print(f"  EM:        {result['EM']:.4f}")
+        print(f"  F1:        {result['F1']:.4f}")
+        print(f"  ROUGE-L:   {result['ROUGE-L']:.4f}")
+        print(f"  Recall@5:  {result['Recall@5']:.4f}" if result['Recall@5'] is not None else "  Recall@5:  N/A")
+        print(f"  Latency:   {result['Latency (s)']:.2f}s")
 
     # =========================
     # Save outputs
     # =========================
-    print("\n💾 Saving results...")
+    print(f"\n{'='*60}")
+    print("💾 Saving results...")
+    print(f"{'='*60}")
 
+    # Save CSV
     with open(CSV_PATH, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=results[0].keys())
         writer.writeheader()
         writer.writerows(results)
+    print(f"✅ CSV saved: {CSV_PATH}")
 
+    # Save detailed JSON logs
     with open(JSON_PATH, "w") as f:
         json.dump(detailed_logs, f, indent=2)
+    print(f"✅ JSON saved: {JSON_PATH}")
 
-    print(f"✅ CSV saved to {CSV_PATH}")
-    print(f"✅ JSON saved to {JSON_PATH}")
-    print("\n📊 Summary Table:")
+    # Print summary table
+    print(f"\n{'='*60}")
+    print("📊 FINAL SUMMARY TABLE")
+    print(f"{'='*60}")
+    print(f"{'Model':<20} | {'EM':>8} | {'F1':>8} | {'ROUGE-L':>8} | {'Recall@5':>8} | {'Latency':>8}")
+    print("-" * 80)
     for r in results:
-        print(f"  {r['model']:20s} | EM: {r['EM']:.3f} | F1: {r['F1']:.3f} | ROUGE-L: {r['ROUGE-L']:.3f}")
+        recall_str = f"{r['Recall@5']:.4f}" if r['Recall@5'] is not None else "N/A"
+        print(f"{r['model']:<20} | {r['EM']:>8.4f} | {r['F1']:>8.4f} | {r['ROUGE-L']:>8.4f} | {recall_str:>8} | {r['Latency (s)']:>7.2f}s")
+    
+    print(f"\n{'='*60}")
+    print("✅ EXPERIMENT COMPLETE")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":
