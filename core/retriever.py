@@ -1,42 +1,34 @@
 """
-FAISS + SQLite Retriever (DIRECT FAISS)
-Research-grade, Colab-safe implementation
+FAISS + SQLite Retriever
 """
 
-import faiss
+import sys
+from pathlib import Path
 import sqlite3
+import faiss
 import numpy as np
 from typing import List, Dict, Optional
-from pathlib import Path
-from .embedder import MedCPTEmbedder
+
+# Force project root import (FIXED - no relative imports)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.embedder import MedCPTEmbedder
 
 
 class FAISSRetriever:
     """
-    Retrieves relevant documents using FAISS vector search + SQLite storage.
-    Supports optional cross-encoder reranking.
+    Retrieves documents using FAISS vector search + SQLite storage.
     """
 
     def __init__(
         self,
-        index_path: str = "data/faiss_index.bin",
-        pmid_map_path: str = "data/pubmed.db",  # Actually using it as sqlite_path
+        index_path: str = "data/faiss.index",
+        db_path: str = "data/pubmed.db",
         top_k: int = 5,
-        rerank: bool = True,
-        embedder: Optional[MedCPTEmbedder] = None
+        embedder: Optional[MedCPTEmbedder] = None,
     ):
-        """
-        Initialize retriever.
-        
-        Args:
-            index_path: Path to FAISS index file
-            pmid_map_path: Path to SQLite database (backwards compatible name)
-            top_k: Default number of documents to retrieve
-            rerank: Whether to use cross-encoder reranking
-            embedder: Optional pre-initialized embedder
-        """
         self.top_k = top_k
-        self.rerank = rerank
 
         # Load embedder
         self.embedder = embedder or MedCPTEmbedder()
@@ -47,80 +39,51 @@ class FAISSRetriever:
             raise FileNotFoundError(f"FAISS index not found: {index_path}")
 
         self.index = faiss.read_index(str(self.index_path))
-        print(f"✓ Loaded FAISS index: {index_path}")
-        print(f"  Total vectors: {self.index.ntotal}")
+        print(f"✓ Loaded FAISS index ({self.index.ntotal} vectors)")
 
-        # Load SQLite DB (using pmid_map_path as db path for compatibility)
-        self.db_path = Path(pmid_map_path)
+        # Connect SQLite
+        self.db_path = Path(db_path)
         if not self.db_path.exists():
-            raise FileNotFoundError(f"SQLite database not found: {pmid_map_path}")
+            raise FileNotFoundError(f"SQLite DB not found: {db_path}")
 
-        self.db = sqlite3.connect(str(self.db_path), check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
-        print(f"✓ Connected to SQLite: {pmid_map_path}")
+        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn.row_factory = sqlite3.Row
+        print("✓ Connected to SQLite database")
 
-    def retrieve(self, query: str, k: int = None, retrieval_k: int = 50) -> List[Dict]:
-        """
-        Retrieve relevant documents for a query.
-        
-        Args:
-            query: Search query
-            k: Number of final documents to return (uses self.top_k if None)
-            retrieval_k: Number of candidates to fetch before reranking
-            
-        Returns:
-            List of document dicts with pmid, title, content, and optional score
-        """
+    def retrieve(self, query: str, k: int = None) -> List[Dict]:
         if k is None:
             k = self.top_k
 
         # Encode query
         query_vec = self.embedder.encode_query(query).astype("float32")
+        faiss.normalize_L2(query_vec)
 
         # FAISS search
-        scores, indices = self.index.search(query_vec, retrieval_k)
+        scores, indices = self.index.search(query_vec, k)
 
         if indices.size == 0:
-            print("⚠️ No documents found in FAISS search")
             return []
 
-        # Extract valid PMIDs (FAISS uses row indices that map to PMIDs)
-        pmids = [int(idx) for idx in indices[0] if idx != -1]
-
-        if not pmids:
-            print("⚠️ No valid document indices returned")
+        rowids = [int(i) for i in indices[0] if i != -1]
+        if not rowids:
             return []
 
-        # Fetch documents from SQLite
-        docs = self._fetch_documents(pmids)
+        return self._fetch_documents(rowids)
 
-        if not docs:
-            print("⚠️ No documents found in database")
-            return []
+    def _fetch_documents(self, rowids: List[int]) -> List[Dict]:
+        placeholders = ",".join("?" for _ in rowids)
 
-        # Optional reranking
-        if self.rerank:
-            return self._rerank_documents(query, docs, k)
-
-        return docs[:k]
-
-    def _fetch_documents(self, pmids: List[int]) -> List[Dict]:
-        """Fetch documents from SQLite by PMID."""
-        if not pmids:
-            return []
-
-        placeholders = ",".join("?" * len(pmids))
         query = f"""
-            SELECT pmid, title, abstract
+            SELECT rowid, pmid, title, abstract
             FROM documents
-            WHERE pmid IN ({placeholders})
+            WHERE rowid IN ({placeholders})
         """
 
-        cursor = self.db.execute(query, pmids)
-        rows = cursor.fetchall()
+        rows = self.conn.execute(query, rowids).fetchall()
 
         return [
             {
+                "rowid": row["rowid"],
                 "pmid": row["pmid"],
                 "title": row["title"],
                 "content": row["abstract"],
@@ -128,41 +91,24 @@ class FAISSRetriever:
             for row in rows
         ]
 
-    def _rerank_documents(self, query: str, docs: List[Dict], k: int) -> List[Dict]:
-        """Rerank documents using cross-encoder."""
-        contents = [doc["content"] for doc in docs]
-        scores = self.embedder.rerank(query, contents)
-
-        scored_docs = [
-            {**doc, "score": float(score)}
-            for doc, score in zip(docs, scores)
-        ]
-
-        scored_docs.sort(key=lambda x: x["score"], reverse=True)
-
-        return scored_docs[:k]
-
-    def __del__(self):
-        """Clean up database connection."""
-        if hasattr(self, "db"):
-            self.db.close()
+    def close(self):
+        self.conn.close()
 
 
-# Quick test
+# Test code
 if __name__ == "__main__":
     retriever = FAISSRetriever(
-        index_path="data/faiss_index.bin",
-        pmid_map_path="data/pubmed.db",
+        index_path="data/faiss.index",
+        db_path="data/pubmed.db",
         top_k=5,
-        rerank=True
     )
 
     query = "What is the role of TP53 in cancer?"
-    docs = retriever.retrieve(query, k=5)
+    docs = retriever.retrieve(query)
 
-    print(f"\n✅ Retrieved {len(docs)} documents:\n")
-    for i, doc in enumerate(docs, 1):
-        print(f"{i}. PMID {doc['pmid']} — {doc['title']}")
-        if "score" in doc:
-            print(f"   Score: {doc['score']:.4f}")
-        print(f"   {doc['content'][:150]}...\n")
+    print(f"\n✅ Retrieved {len(docs)} documents\n")
+    for i, d in enumerate(docs, 1):
+        print(f"{i}. PMID {d['pmid']} — {d['title']}")
+        print(f"   {d['content'][:150]}...\n")
+
+    retriever.close()
