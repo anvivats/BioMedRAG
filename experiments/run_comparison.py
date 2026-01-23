@@ -13,10 +13,10 @@ from typing import List, Dict
 
 import numpy as np
 import torch
+from datasets import load_dataset
 
 from models import get_model, MODEL_INFO
 from docker.faiss_server import search as retrieve_documents
-from data.load_pubmedqa import load_pubmedqa
 
 
 # =========================
@@ -35,6 +35,27 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 CSV_PATH = OUTPUT_DIR / "model_comparison.csv"
 JSON_PATH = OUTPUT_DIR / "detailed_outputs.json"
+
+
+# =========================
+# Load PubMedQA for evaluation
+# =========================
+def load_pubmedqa(split: str = "test"):
+    """Load PubMedQA dataset from HuggingFace for evaluation."""
+    print(f"📥 Loading PubMedQA dataset (split: {split})...")
+    
+    raw_dataset = load_dataset("qiaojin/PubMedQA", "pqa_labeled", split=split)
+    
+    dataset = []
+    for example in raw_dataset:
+        dataset.append({
+            "question": example.get("question", ""),
+            "answer": example.get("final_decision", ""),  # "yes", "no", or "maybe"
+            "pmid": example.get("pubid", None)
+        })
+    
+    print(f"✓ Loaded {len(dataset)} examples")
+    return dataset
 
 
 # =========================
@@ -105,7 +126,6 @@ def rouge_l(pred: str, gold: str) -> float:
 def run():
     set_seed(SEED)
 
-    print("📥 Loading PubMedQA...")
     dataset = load_pubmedqa(split="test")
 
     results = []
