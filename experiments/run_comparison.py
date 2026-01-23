@@ -1,16 +1,22 @@
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import time
 import json
 import csv
 import random
-from pathlib import Path
 from typing import List, Dict
 
 import numpy as np
 import torch
 
 from models import get_model, MODEL_INFO
-from faiss_server import retrieve_documents  # adjust if needed
-from data.load_pubmedqa import load_pubmedqa  # adjust if needed
+from faiss_server import retrieve_documents
+from data.load_pubmedqa import load_pubmedqa
 
 
 # =========================
@@ -56,8 +62,11 @@ def token_f1(pred: str, gold: str) -> float:
     if len(common) == 0:
         return 0.0
 
-    precision = len(common) / len(pred_tokens)
-    recall = len(common) / len(gold_tokens)
+    precision = len(common) / len(pred_tokens) if len(pred_tokens) > 0 else 0.0
+    recall = len(common) / len(gold_tokens) if len(gold_tokens) > 0 else 0.0
+
+    if precision + recall == 0:
+        return 0.0
 
     return 2 * (precision * recall) / (precision + recall)
 
@@ -81,8 +90,11 @@ def rouge_l(pred: str, gold: str) -> float:
     if lcs_len == 0:
         return 0.0
 
-    precision = lcs_len / len(pred_tokens)
-    recall = lcs_len / len(gold_tokens)
+    precision = lcs_len / len(pred_tokens) if len(pred_tokens) > 0 else 0.0
+    recall = lcs_len / len(gold_tokens) if len(gold_tokens) > 0 else 0.0
+
+    if precision + recall == 0:
+        return 0.0
 
     return (2 * precision * recall) / (precision + recall)
 
@@ -109,7 +121,10 @@ def run():
         retrieval_hits = []
         latencies = []
 
-        for sample in dataset:
+        for idx, sample in enumerate(dataset):
+            if idx % 10 == 0:
+                print(f"  Progress: {idx}/{len(dataset)}")
+            
             question = sample["question"]
             gold_answer = sample["answer"]
             gold_pmid = sample.get("pmid")
@@ -159,6 +174,7 @@ def run():
         }
 
         results.append(result)
+        print(f"✓ {model_key}: EM={result['EM']:.3f}, F1={result['F1']:.3f}, Latency={result['Latency (s)']:.2f}s")
 
     # =========================
     # Save outputs
@@ -175,6 +191,9 @@ def run():
 
     print(f"✅ CSV saved to {CSV_PATH}")
     print(f"✅ JSON saved to {JSON_PATH}")
+    print("\n📊 Summary Table:")
+    for r in results:
+        print(f"  {r['model']:20s} | EM: {r['EM']:.3f} | F1: {r['F1']:.3f} | ROUGE-L: {r['ROUGE-L']:.3f}")
 
 
 if __name__ == "__main__":
