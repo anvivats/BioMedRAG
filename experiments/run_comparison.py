@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 from models import get_model, MODEL_INFO
-from faiss_server import retrieve_documents
+from docker.faiss_server import retrieve_documents
 from data.load_pubmedqa import load_pubmedqa
 
 
@@ -106,7 +106,7 @@ def run():
     set_seed(SEED)
 
     print("📥 Loading PubMedQA...")
-    dataset = load_pubmedqa(split="test")  # adjust split if needed
+    dataset = load_pubmedqa(split="test")
 
     results = []
     detailed_logs = []
