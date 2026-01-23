@@ -1,5 +1,5 @@
 """
-FAISS + SQLite Retriever
+FAISS + SQLite Retriever (with PMID mapping)
 """
 
 import sys
@@ -7,9 +7,10 @@ from pathlib import Path
 import sqlite3
 import faiss
 import numpy as np
+import pickle
 from typing import List, Dict, Optional
 
-# Force project root import (FIXED - no relative imports)
+# Force project root import
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -19,19 +20,26 @@ from core.embedder import MedCPTEmbedder
 class FAISSRetriever:
     """
     Retrieves documents using FAISS vector search + SQLite storage.
+    Uses PMID mapping to correctly link FAISS indices to documents.
     """
 
     def __init__(
         self,
-        index_path: str = "data/faiss.index",
+        index_path: str = "data/faiss_index.bin",
         db_path: str = "data/pubmed.db",
+        pmid_map_path: str = "data/pmid_map.pkl",
         top_k: int = 5,
         embedder: Optional[MedCPTEmbedder] = None,
     ):
         self.top_k = top_k
 
-        # Load embedder
-        self.embedder = embedder or MedCPTEmbedder()
+        # Load embedder (or use shared one)
+        if embedder is None:
+            print("Loading MedCPT embedder...")
+            self.embedder = MedCPTEmbedder()
+        else:
+            print("Using shared embedder")
+            self.embedder = embedder
 
         # Load FAISS index
         self.index_path = Path(index_path)
@@ -40,6 +48,15 @@ class FAISSRetriever:
 
         self.index = faiss.read_index(str(self.index_path))
         print(f"✓ Loaded FAISS index ({self.index.ntotal} vectors)")
+
+        # Load PMID mapping (CRITICAL!)
+        self.pmid_map_path = Path(pmid_map_path)
+        if not self.pmid_map_path.exists():
+            raise FileNotFoundError(f"PMID mapping not found: {pmid_map_path}")
+        
+        with open(self.pmid_map_path, 'rb') as f:
+            self.pmid_map = pickle.load(f)
+        print(f"✓ Loaded PMID mapping ({len(self.pmid_map)} entries)")
 
         # Connect SQLite
         self.db_path = Path(db_path)
@@ -51,6 +68,16 @@ class FAISSRetriever:
         print("✓ Connected to SQLite database")
 
     def retrieve(self, query: str, k: int = None) -> List[Dict]:
+        """
+        Retrieve top-k documents for a query.
+        
+        Args:
+            query: Query string
+            k: Number of documents to retrieve
+            
+        Returns:
+            List of documents with pmid, title, content
+        """
         if k is None:
             k = self.top_k
 
@@ -64,26 +91,31 @@ class FAISSRetriever:
         if indices.size == 0:
             return []
 
-        rowids = [int(i) for i in indices[0] if i != -1]
-        if not rowids:
+        # Map FAISS indices to PMIDs (FIXED!)
+        pmids = []
+        for idx in indices[0]:
+            if idx != -1 and idx < len(self.pmid_map):
+                pmids.append(self.pmid_map[idx])
+        
+        if not pmids:
             return []
 
-        return self._fetch_documents(rowids)
+        return self._fetch_documents(pmids)
 
-    def _fetch_documents(self, rowids: List[int]) -> List[Dict]:
-        placeholders = ",".join("?" for _ in rowids)
+    def _fetch_documents(self, pmids: List[int]) -> List[Dict]:
+        """Fetch documents from SQLite by PMID."""
+        placeholders = ",".join("?" for _ in pmids)
 
         query = f"""
-            SELECT rowid, pmid, title, abstract
+            SELECT pmid, title, abstract
             FROM documents
-            WHERE rowid IN ({placeholders})
+            WHERE pmid IN ({placeholders})
         """
 
-        rows = self.conn.execute(query, rowids).fetchall()
+        rows = self.conn.execute(query, pmids).fetchall()
 
         return [
             {
-                "rowid": row["rowid"],
                 "pmid": row["pmid"],
                 "title": row["title"],
                 "content": row["abstract"],
@@ -92,14 +124,16 @@ class FAISSRetriever:
         ]
 
     def close(self):
+        """Close database connection."""
         self.conn.close()
 
 
 # Test code
 if __name__ == "__main__":
     retriever = FAISSRetriever(
-        index_path="data/faiss.index",
+        index_path="data/faiss_index.bin",
         db_path="data/pubmed.db",
+        pmid_map_path="data/pmid_map.pkl",
         top_k=5,
     )
 
