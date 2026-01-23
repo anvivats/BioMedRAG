@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 from models import get_model, MODEL_INFO
-from docker.faiss_server import retrieve_documents
+from docker.faiss_server import search as retrieve_documents
 from data.load_pubmedqa import load_pubmedqa
 
 
