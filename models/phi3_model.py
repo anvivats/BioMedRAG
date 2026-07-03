@@ -36,7 +36,11 @@ class Phi3Model(BaseLLM):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        dtype = torch.float16 if self.device in ["cuda", "mps"] else torch.float32
+        # fp16 is only numerically stable on CUDA. Apple's MPS backend has a
+        # known bug where fp16 attention/softmax can overflow into inf/NaN
+        # during sampling, which crashes generation. CPU also doesn't
+        # benefit from fp16. So: fp16 on CUDA only, fp32 everywhere else.
+        dtype = torch.float16 if self.device == "cuda" else torch.float32
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
