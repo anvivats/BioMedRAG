@@ -16,7 +16,6 @@ except ImportError:
 class Phi3Model(BaseLLM):
     """
     Phi-3 Mini Instruct model
-    Fixed for DynamicCache compatibility
     """
 
     def __init__(
@@ -83,10 +82,6 @@ Question: {question}
         top_p: float,
         max_new_tokens: int
     ) -> str:
-        """
-        Override parent's _generate_text to disable KV cache.
-        This fixes the DynamicCache.seen_tokens error.
-        """
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
@@ -103,7 +98,7 @@ Question: {question}
                 do_sample=temperature > 0,
                 pad_token_id=self.tokenizer.eos_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
-                use_cache=False  # 🔑 FIX: Disable KV cache
+                use_cache=True
             )
 
         # Decode only the new tokens (exclude prompt)
