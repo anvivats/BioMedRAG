@@ -2,13 +2,20 @@
 Build FAISS index from SQLite PubMed database with PMID mapping
 """
 
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import sys
 from pathlib import Path
 import sqlite3
 import numpy as np
+import torch
 import faiss
 import pickle
 from tqdm import tqdm
+
+torch.set_num_threads(1)
 
 # Project root import fix
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -64,9 +71,9 @@ def main():
     print("\n🧠 Loading MedCPT embedder...")
     embedder = MedCPTEmbedder()
 
-    # Encode documents (BATCHED)
+    # Encode documents (BATCHED, small batch size for stability)
     print("\n🔢 Encoding documents...")
-    embeddings = embedder.encode_documents(texts, batch_size=32)
+    embeddings = embedder.encode_documents(texts, batch_size=8)
     embeddings = np.asarray(embeddings, dtype="float32")
 
     # Build FAISS index

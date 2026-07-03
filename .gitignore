@@ -1,25 +1,9 @@
-# Python bytecode
+.venv/
 __pycache__/
 *.pyc
-*.pyo
-
-# Virtual environments
-venv/
-.env
-.venv
-conda/
-
-# FAISS / binary data (do NOT version)
-data/*.bin
-data/*.pkl
-
-# Model caches / weights
-models/*
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
+.cache/
+*.safetensors
+*.bin
+data/faiss_index.bin
+data/pmid_map.pkl
 
