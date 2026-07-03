@@ -31,8 +31,7 @@ class Phi3Model(BaseLLM):
         print(f"🔄 Loading {self.model_name} on {self.device}...")
         
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name,
-            trust_remote_code=True
+            self.model_name
         )
         
         if self.tokenizer.pad_token is None:
@@ -42,8 +41,7 @@ class Phi3Model(BaseLLM):
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
-            trust_remote_code=True,
-            torch_dtype=dtype,
+            dtype=dtype,
         )
 
         self.model.to(self.device)
