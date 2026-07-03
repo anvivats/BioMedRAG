@@ -26,20 +26,20 @@ class TinyLlamaModel(BaseLLM):
         print(f"🔄 Loading TinyLlama on {self.device}...")
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name,
-            trust_remote_code=True
-        )
-
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
-            trust_remote_code=True,
-            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-            device_map="auto" if self.device == "cuda" else None
+            self.model_name
         )
 
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        dtype = torch.float16 if self.device in ["cuda", "mps"] else torch.float32
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.model_name,
+            dtype=dtype,
+        )
+
+        self.model.to(self.device)
         self.model.eval()
 
         print(f"✅ TinyLlama loaded")
